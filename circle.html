@@ -1,0 +1,544 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Circle Window</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/selfie_segmentation.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html, body {
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+        }
+
+        body {
+            border-radius: 50%;
+            background: transparent;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            cursor: move;
+            -webkit-app-region: drag;
+            position: relative;
+        }
+
+        .drag-overlay {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            border-radius: 50%;
+            -webkit-app-region: drag;
+            z-index: 100;
+            pointer-events: auto;
+            cursor: move;
+        }
+
+        .resize-handle {
+            position: absolute;
+            background: transparent;
+            z-index: 200;
+        }
+
+        .resize-handle.nw {
+            top: 0;
+            left: 0;
+            width: 20px;
+            height: 20px;
+            cursor: nwse-resize;
+            -webkit-app-region: no-drag;
+        }
+
+        .resize-handle.ne {
+            top: 0;
+            right: 0;
+            width: 20px;
+            height: 20px;
+            cursor: nesw-resize;
+            -webkit-app-region: no-drag;
+        }
+
+        .resize-handle.sw {
+            bottom: 0;
+            left: 0;
+            width: 20px;
+            height: 20px;
+            cursor: nesw-resize;
+            -webkit-app-region: no-drag;
+        }
+
+        .resize-handle.se {
+            bottom: 0;
+            right: 0;
+            width: 20px;
+            height: 20px;
+            cursor: nwse-resize;
+            -webkit-app-region: no-drag;
+        }
+
+        .resize-handle.n {
+            top: 0;
+            left: 20px;
+            right: 20px;
+            height: 10px;
+            cursor: ns-resize;
+            -webkit-app-region: no-drag;
+        }
+
+        .resize-handle.s {
+            bottom: 0;
+            left: 20px;
+            right: 20px;
+            height: 10px;
+            cursor: ns-resize;
+            -webkit-app-region: no-drag;
+        }
+
+        .resize-handle.e {
+            top: 20px;
+            bottom: 20px;
+            right: 0;
+            width: 10px;
+            cursor: ew-resize;
+            -webkit-app-region: no-drag;
+        }
+
+        .resize-handle.w {
+            top: 20px;
+            bottom: 20px;
+            left: 0;
+            width: 10px;
+            cursor: ew-resize;
+            -webkit-app-region: no-drag;
+        }
+
+        video {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            border-radius: 50%;
+            transform: scaleX(-1);
+            -webkit-app-region: drag;
+            pointer-events: none;
+            background: #000;
+            display: none;
+        }
+
+        canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            border-radius: 50%;
+            transform: scaleX(-1);
+            -webkit-app-region: drag;
+            pointer-events: none;
+            background: #000;
+            display: none;
+        }
+
+        .loading {
+            position: absolute;
+            color: white;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            font-size: 14px;
+            text-align: center;
+            z-index: 1;
+            -webkit-app-region: drag;
+            pointer-events: none;
+        }
+
+        .error {
+            position: absolute;
+            color: #ff6b6b;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            font-size: 12px;
+            text-align: center;
+            padding: 10px;
+            z-index: 1;
+            -webkit-app-region: drag;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="drag-overlay"></div>
+    <div class="resize-handle nw"></div>
+    <div class="resize-handle ne"></div>
+    <div class="resize-handle sw"></div>
+    <div class="resize-handle se"></div>
+    <div class="resize-handle n"></div>
+    <div class="resize-handle s"></div>
+    <div class="resize-handle e"></div>
+    <div class="resize-handle w"></div>
+    <div class="loading" id="loading">Loading camera...</div>
+    <div class="error" id="error" style="display: none;"></div>
+    <video id="video" autoplay playsinline style="display: none;"></video>
+    <canvas id="output"></canvas>
+
+    <script>
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('output');
+        const ctx = canvas.getContext('2d');
+        const loading = document.getElementById('loading');
+        const error = document.getElementById('error');
+        let currentStream = null;
+        let selectedCameraId = null;
+        let blurEnabled = false;
+        let selfieSegmentation = null;
+        let camera = null;
+
+        // Try to get window for resize functionality (optional)
+        let win = null;
+        try {
+            const { remote } = require('electron');
+            win = remote ? remote.getCurrentWindow() : null;
+        } catch (e) {
+            console.log('Remote module not available, resize may not work');
+        }
+
+        // Listen for camera updates from main window
+        try {
+            const { ipcRenderer } = require('electron');
+            ipcRenderer.on('update-camera', (event, cameraId) => {
+                selectedCameraId = cameraId;
+                updateCamera();
+            });
+            
+            // Listen for blur toggle updates
+            ipcRenderer.on('update-blur', (event, enabled) => {
+                console.log('Blur toggle received:', enabled);
+                blurEnabled = enabled;
+                if (blurEnabled) {
+                    // Wait a bit for video to be ready, then initialize
+                    if (currentStream && video && video.readyState >= video.HAVE_METADATA) {
+                        console.log('Initializing MediaPipe...');
+                        setTimeout(() => initializeMediaPipe(), 100);
+                    } else {
+                        console.log('Video not ready yet, will initialize when ready');
+                        // Will be initialized in updateCamera when video loads
+                    }
+                } else {
+                    console.log('Stopping MediaPipe...');
+                    stopMediaPipe();
+                    // Show video directly when blur is disabled
+                    if (video && video.srcObject) {
+                        video.style.display = 'block';
+                        canvas.style.display = 'none';
+                    }
+                }
+            });
+        } catch (e) {
+            console.log('IPC not available');
+        }
+
+        let isResizing = false;
+        let resizeDirection = '';
+        let startX, startY, startWidth, startHeight;
+
+        // Resize handles (only if window is available)
+        if (win) {
+            const resizeHandles = document.querySelectorAll('.resize-handle');
+            
+            resizeHandles.forEach(handle => {
+                handle.addEventListener('mousedown', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    isResizing = true;
+                    resizeDirection = handle.className.split(' ')[1];
+                    const bounds = win.getBounds();
+                    startX = e.screenX;
+                    startY = e.screenY;
+                    startWidth = bounds.width;
+                    startHeight = bounds.height;
+                });
+            });
+
+            document.addEventListener('mousemove', (e) => {
+                if (!isResizing || !win) return;
+
+                const deltaX = e.screenX - startX;
+                const deltaY = e.screenY - startY;
+
+                // Calculate the distance moved (for uniform resize)
+                // Use the maximum of absolute deltas to maintain square shape
+                const distance = Math.max(Math.abs(deltaX), Math.abs(deltaY));
+                
+                // Determine if we're increasing or decreasing size
+                let sizeChange = 0;
+                if (resizeDirection.includes('e') || resizeDirection.includes('s')) {
+                    // Resizing from right or bottom - increase size
+                    sizeChange = distance;
+                } else if (resizeDirection.includes('w') || resizeDirection.includes('n')) {
+                    // Resizing from left or top - decrease size
+                    sizeChange = -distance;
+                }
+
+                const newSize = Math.max(100, Math.min(800, startWidth + sizeChange));
+
+                // Calculate new position if resizing from top or left
+                const bounds = win.getBounds();
+                let newX = bounds.x;
+                let newY = bounds.y;
+                
+                if (resizeDirection.includes('w')) {
+                    newX = bounds.x + bounds.width - newSize;
+                }
+                if (resizeDirection.includes('n')) {
+                    newY = bounds.y + bounds.height - newSize;
+                }
+
+                // Always set both width and height to the same value for uniform resize
+                win.setBounds({
+                    x: newX,
+                    y: newY,
+                    width: newSize,
+                    height: newSize
+                });
+            });
+
+            document.addEventListener('mouseup', () => {
+                isResizing = false;
+                resizeDirection = '';
+            });
+        }
+
+        // Initialize MediaPipe Selfie Segmentation
+        async function initializeMediaPipe() {
+            try {
+                // Stop existing MediaPipe if running
+                stopMediaPipe();
+                
+                // Wait for scripts to load if they're still loading
+                let retries = 0;
+                while ((typeof SelfieSegmentation === 'undefined' || typeof Camera === 'undefined') && retries < 50) {
+                    await new Promise(resolve => setTimeout(resolve, 100));
+                    retries++;
+                }
+                
+                // Check if MediaPipe is available (loaded from CDN via script tags)
+                if (typeof SelfieSegmentation === 'undefined' || typeof Camera === 'undefined') {
+                    throw new Error('MediaPipe libraries not loaded. Please check your internet connection and ensure scripts are loaded.');
+                }
+                
+                console.log('MediaPipe classes found, initializing...');
+                
+                // Initialize Selfie Segmentation
+                selfieSegmentation = new SelfieSegmentation({
+                    locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/${file}`
+                });
+                
+                selfieSegmentation.setOptions({
+                    modelSelection: 1 // 1 = landscape (higher quality)
+                });
+                
+                selfieSegmentation.onResults(onResults);
+                
+                // Start camera processing
+                camera = new Camera(video, {
+                    onFrame: async () => {
+                        if (selfieSegmentation && video.readyState === video.HAVE_ENOUGH_DATA) {
+                            await selfieSegmentation.send({ image: video });
+                        }
+                    },
+                    width: 640,
+                    height: 640
+                });
+                
+                camera.start();
+                
+                // Hide video, show canvas
+                video.style.display = 'none';
+                canvas.style.display = 'block';
+                
+                // Ensure canvas is visible and properly sized
+                if (canvas) {
+                    canvas.style.zIndex = '10';
+                }
+                
+                console.log('MediaPipe initialized and camera started');
+            } catch (err) {
+                console.error('Error initializing MediaPipe:', err);
+                console.error('Error details:', err.message, err.stack);
+                // Fallback to regular video if MediaPipe fails
+                video.style.display = 'block';
+                canvas.style.display = 'none';
+                error.textContent = 'Failed to initialize blur: ' + err.message;
+                error.style.display = 'block';
+            }
+        }
+        
+        // Stop MediaPipe processing
+        function stopMediaPipe() {
+            if (camera) {
+                camera.stop();
+                camera = null;
+            }
+            if (selfieSegmentation) {
+                selfieSegmentation.close();
+                selfieSegmentation = null;
+            }
+        }
+        
+        // Callback when MediaPipe returns segmentation
+        function onResults(results) {
+            if (!canvas || !ctx || !video || !results) {
+                console.log('onResults: Missing required elements', { canvas: !!canvas, ctx: !!ctx, video: !!video, results: !!results });
+                return;
+            }
+            
+            try {
+                // Set canvas size to match video
+                const width = video.videoWidth || 640;
+                const height = video.videoHeight || 640;
+                
+                if (canvas.width !== width || canvas.height !== height) {
+                    canvas.width = width;
+                    canvas.height = height;
+                }
+                
+                // Clear canvas
+                ctx.clearRect(0, 0, width, height);
+                
+                if (!results.segmentationMask) {
+                    console.warn('No segmentation mask available, drawing image without blur');
+                    // Fallback: just draw the image
+                    ctx.drawImage(results.image, 0, 0, width, height);
+                    return;
+                }
+                
+                // Create a temporary canvas for the blurred background
+                const blurCanvas = document.createElement('canvas');
+                blurCanvas.width = width;
+                blurCanvas.height = height;
+                const blurCtx = blurCanvas.getContext('2d');
+                
+                // Draw blurred version of the image
+                blurCtx.filter = 'blur(15px)';
+                blurCtx.drawImage(results.image, 0, 0, width, height);
+                blurCtx.filter = 'none';
+                
+                // Draw the blurred background on main canvas
+                ctx.drawImage(blurCanvas, 0, 0, width, height);
+                
+                // Create another temp canvas for the sharp person
+                const personCanvas = document.createElement('canvas');
+                personCanvas.width = width;
+                personCanvas.height = height;
+                const personCtx = personCanvas.getContext('2d');
+                
+                // Draw the original sharp image
+                personCtx.drawImage(results.image, 0, 0, width, height);
+                
+                // Apply mask to keep only the person (white areas in mask)
+                personCtx.globalCompositeOperation = 'destination-in';
+                personCtx.drawImage(results.segmentationMask, 0, 0, width, height);
+                
+                // Draw the sharp person on top of the blurred background
+                ctx.globalCompositeOperation = 'source-over';
+                ctx.drawImage(personCanvas, 0, 0, width, height);
+                
+                // Reset composite operation
+                ctx.globalCompositeOperation = 'source-over';
+                
+            } catch (err) {
+                console.error('Error in onResults:', err);
+                console.error('Error stack:', err.stack);
+            }
+        }
+
+        async function updateCamera() {
+            // Stop MediaPipe if running
+            stopMediaPipe();
+            
+            // Stop current stream if exists
+            if (currentStream) {
+                currentStream.getTracks().forEach(track => track.stop());
+                currentStream = null;
+            }
+
+            try {
+                loading.textContent = 'Requesting camera access...';
+                loading.style.display = 'block';
+                error.style.display = 'none';
+                
+                const constraints = {
+                    video: selectedCameraId ? 
+                        { deviceId: { exact: selectedCameraId }, width: { ideal: 640 }, height: { ideal: 640 } } :
+                        { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 640 } }
+                };
+                
+                const stream = await navigator.mediaDevices.getUserMedia(constraints);
+                currentStream = stream;
+                
+                if (video) {
+                    video.srcObject = stream;
+                    
+                    // Wait for video to load
+                    video.onloadedmetadata = () => {
+                        video.play().then(() => {
+                            loading.style.display = 'none';
+                            error.style.display = 'none';
+                            
+                            // Initialize MediaPipe if blur is enabled
+                            if (blurEnabled) {
+                                console.log('Camera loaded, initializing MediaPipe with blur enabled');
+                                setTimeout(() => initializeMediaPipe(), 200);
+                            } else {
+                                video.style.display = 'block';
+                                canvas.style.display = 'none';
+                            }
+                        }).catch(err => {
+                            console.error('Error playing video:', err);
+                            loading.style.display = 'none';
+                            error.style.display = 'none';
+                        });
+                    };
+                    
+                    // Also try to play immediately
+                    video.play().catch(err => {
+                        console.log('Initial play failed, will retry on metadata:', err);
+                    });
+                    
+                    video.onerror = (err) => {
+                        console.error('Video error:', err);
+                        error.textContent = 'Video error occurred';
+                        error.style.display = 'block';
+                        loading.style.display = 'none';
+                    };
+                }
+            } catch (err) {
+                console.error('Error accessing camera:', err);
+                loading.style.display = 'none';
+                error.textContent = 'Camera access denied: ' + err.message;
+                error.style.display = 'block';
+            }
+        }
+
+        // Start camera when page loads
+        updateCamera();
+
+        // Clean up stream when window closes
+        window.addEventListener('beforeunload', () => {
+            stopMediaPipe();
+            if (currentStream) {
+                currentStream.getTracks().forEach(track => track.stop());
+            }
+        });
+    </script>
+</body>
+</html>

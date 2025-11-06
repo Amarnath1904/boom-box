@@ -1,0 +1,667 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Boom Box</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@800;900&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            display: flex;
+            flex-direction: column;
+            justify-content: flex-start;
+            align-items: center;
+            height: 100vh;
+            background: #000000;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            color: #e0e0e0;
+            overflow-y: auto;
+        }
+
+        /* Custom Scrollbar Styling */
+        body::-webkit-scrollbar {
+            width: 10px;
+        }
+
+        body::-webkit-scrollbar-track {
+            background: #0a0a0a;
+            border-radius: 5px;
+        }
+
+        body::-webkit-scrollbar-thumb {
+            background: #2a2a2a;
+            border-radius: 5px;
+            border: 2px solid #0a0a0a;
+        }
+
+        body::-webkit-scrollbar-thumb:hover {
+            background: #3a3a3a;
+        }
+
+        /* Firefox scrollbar */
+        body {
+            scrollbar-width: thin;
+            scrollbar-color: #2a2a2a #0a0a0a;
+        }
+
+        .boom-box {
+            width: 100%;
+            max-width: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: flex-start;
+            align-items: center;
+            background: #0a0a0a;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 16px;
+            box-shadow: 
+                0 8px 32px rgba(0, 0, 0, 0.8),
+                inset 0 1px 0 rgba(255, 255, 255, 0.05);
+            padding: 28px;
+            gap: 24px;
+        }
+
+        h1 {
+            font-size: 42px;
+            font-weight: 800;
+            letter-spacing: 8px;
+            margin: 0;
+            color: #ffffff;
+            text-align: center;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            text-transform: uppercase;
+            line-height: 1.2;
+            text-shadow: 
+                0 0 10px rgba(255, 255, 255, 0.1),
+                0 2px 4px rgba(0, 0, 0, 0.5);
+            margin-bottom: 8px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .controls-section {
+            width: 100%;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .device-select {
+            width: 100%;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .device-select label {
+            font-size: 13px;
+            font-weight: 600;
+            color: #b0b0b0;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 4px;
+        }
+
+        .device-select select {
+            width: 100%;
+            padding: 12px 16px;
+            border-radius: 10px;
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            background: #1a1a1a;
+            color: #e0e0e0;
+            font-size: 14px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            outline: none;
+        }
+
+        .device-select select:hover {
+            border-color: rgba(255, 255, 255, 0.25);
+            background: #252525;
+        }
+
+        .device-select select:focus {
+            border-color: rgba(255, 255, 255, 0.4);
+            box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.1);
+        }
+
+        .device-select select option {
+            background: #0a0a0a;
+            color: #e0e0e0;
+            padding: 8px;
+        }
+
+        .status {
+            font-size: 11px;
+            color: #888;
+            margin-top: 4px;
+            font-weight: 500;
+        }
+
+        .blur-toggle {
+            width: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            padding: 14px 16px;
+            background: #1a1a1a;
+            border-radius: 10px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            transition: all 0.2s ease;
+        }
+
+        .blur-toggle:hover {
+            border-color: rgba(255, 255, 255, 0.2);
+            background: #252525;
+        }
+
+        .blur-toggle label {
+            font-size: 14px;
+            font-weight: 500;
+            color: #e0e0e0;
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .blur-toggle input[type="checkbox"] {
+            width: 44px;
+            height: 24px;
+            cursor: pointer;
+            appearance: none;
+            background: #333333;
+            border-radius: 12px;
+            position: relative;
+            transition: all 0.3s ease;
+            outline: none;
+        }
+
+        .blur-toggle input[type="checkbox"]:checked {
+            background: #555555;
+        }
+
+        .blur-toggle input[type="checkbox"]::before {
+            content: '';
+            position: absolute;
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: white;
+            top: 3px;
+            left: 3px;
+            transition: all 0.3s ease;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+        }
+
+        .blur-toggle input[type="checkbox"]:checked::before {
+            left: 23px;
+        }
+
+        .buttons {
+            width: 100%;
+            display: flex;
+            gap: 12px;
+            justify-content: center;
+            margin-top: 8px;
+        }
+
+        button {
+            padding: 14px 28px;
+            border: none;
+            border-radius: 10px;
+            background: #2a2a2a;
+            color: white;
+            font-size: 15px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            flex: 1;
+            max-width: 160px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+            position: relative;
+            overflow: hidden;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        button::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+            transition: left 0.5s;
+        }
+
+        button:hover::before {
+            left: 100%;
+        }
+
+        button:hover {
+            transform: translateY(-2px);
+            background: #3a3a3a;
+            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.7);
+            border-color: rgba(255, 255, 255, 0.2);
+        }
+
+        button:active {
+            transform: translateY(0);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        button:disabled:hover {
+            transform: none;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+        }
+
+        button.recording {
+            background: #cc0000;
+            box-shadow: 0 4px 12px rgba(204, 0, 0, 0.5);
+            animation: pulse-red 2s ease-in-out infinite;
+        }
+
+        button.recording:hover {
+            background: #ff0000;
+            box-shadow: 0 6px 20px rgba(255, 0, 0, 0.6);
+        }
+
+        button.paused {
+            background: #ff8800;
+            box-shadow: 0 4px 12px rgba(255, 136, 0, 0.4);
+        }
+
+        button.paused:hover {
+            background: #ffaa00;
+            box-shadow: 0 6px 20px rgba(255, 170, 0, 0.5);
+        }
+
+        @keyframes pulse-red {
+            0%, 100% {
+                box-shadow: 0 4px 12px rgba(204, 0, 0, 0.5);
+            }
+            50% {
+                box-shadow: 0 4px 20px rgba(255, 0, 0, 0.7);
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="boom-box">
+        <h1>boom-box</h1>
+        
+        <div class="controls-section">
+            <div class="device-select">
+                <label for="micSelect">Microphone:</label>
+                <select id="micSelect">
+                    <option value="">Loading microphones...</option>
+                </select>
+                <div class="status" id="micStatus"></div>
+            </div>
+
+            <div class="device-select">
+                <label for="cameraSelect">Camera:</label>
+                <select id="cameraSelect">
+                    <option value="">Loading cameras...</option>
+                </select>
+                <div class="status" id="cameraStatus"></div>
+            </div>
+
+            <div class="blur-toggle">
+                <input type="checkbox" id="blurToggle" />
+                <label for="blurToggle">Background Blur</label>
+            </div>
+
+            <div class="buttons">
+                <button id="recordBtn">Record</button>
+                <button id="playPauseBtn">Pause</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let mediaRecorder = null;
+        let recordedChunks = [];
+        let audioStream = null;
+        let videoStream = null;
+        let audioContext = null;
+        let gainNode = null;
+        let audioDestination = null;
+        let isRecording = false;
+        let isPaused = false;
+        let selectedMicId = null;
+        let selectedCameraId = null;
+
+        const micSelect = document.getElementById('micSelect');
+        const cameraSelect = document.getElementById('cameraSelect');
+        const recordBtn = document.getElementById('recordBtn');
+        const playPauseBtn = document.getElementById('playPauseBtn');
+        const micStatus = document.getElementById('micStatus');
+        const cameraStatus = document.getElementById('cameraStatus');
+        const blurToggle = document.getElementById('blurToggle');
+
+        // Load available devices
+        async function loadDevices() {
+            try {
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                const audioInputs = devices.filter(device => device.kind === 'audioinput');
+                const videoInputs = devices.filter(device => device.kind === 'videoinput');
+
+                // Store currently selected values
+                const currentMicId = micSelect.value;
+                const currentCameraId = cameraSelect.value;
+
+                // Populate microphone dropdown
+                micSelect.innerHTML = '';
+                audioInputs.forEach((device, index) => {
+                    const option = document.createElement('option');
+                    option.value = device.deviceId;
+                    option.textContent = device.label || `Microphone ${index + 1}`;
+                    micSelect.appendChild(option);
+                });
+
+                // Restore selected microphone if it still exists, otherwise select first/default
+                if (currentMicId && audioInputs.some(device => device.deviceId === currentMicId)) {
+                    micSelect.value = currentMicId;
+                } else if (audioInputs.length > 0) {
+                    micSelect.value = audioInputs[0].deviceId;
+                }
+
+                // Populate camera dropdown
+                cameraSelect.innerHTML = '';
+                videoInputs.forEach((device, index) => {
+                    const option = document.createElement('option');
+                    option.value = device.deviceId;
+                    option.textContent = device.label || `Camera ${index + 1}`;
+                    cameraSelect.appendChild(option);
+                });
+
+                // Restore selected camera if it still exists, otherwise select first/default
+                let cameraChanged = false;
+                if (currentCameraId && videoInputs.some(device => device.deviceId === currentCameraId)) {
+                    cameraSelect.value = currentCameraId;
+                } else {
+                    if (videoInputs.length > 0) {
+                        cameraSelect.value = videoInputs[0].deviceId;
+                        cameraChanged = true;
+                    } else {
+                        cameraSelect.value = '';
+                        // If camera was selected and removed, update circle window
+                        if (currentCameraId) {
+                            try {
+                                const { ipcRenderer } = require('electron');
+                                ipcRenderer.send('camera-selected', '');
+                            } catch (e) {
+                                console.log('IPC not available:', e);
+                            }
+                        }
+                    }
+                }
+                
+                // If camera was auto-selected, notify circle window
+                if (cameraChanged && videoInputs.length > 0) {
+                    try {
+                        const { ipcRenderer } = require('electron');
+                        ipcRenderer.send('camera-selected', videoInputs[0].deviceId);
+                    } catch (e) {
+                        console.log('IPC not available:', e);
+                    }
+                }
+
+                if (audioInputs.length > 0) {
+                    micStatus.textContent = `${audioInputs.length} microphone(s) found`;
+                } else {
+                    micStatus.textContent = 'No microphones found';
+                }
+
+                if (videoInputs.length > 0) {
+                    cameraStatus.textContent = `${videoInputs.length} camera(s) found`;
+                } else {
+                    cameraStatus.textContent = 'No cameras found';
+                }
+            } catch (error) {
+                console.error('Error loading devices:', error);
+                micStatus.textContent = 'Error loading microphones';
+                cameraStatus.textContent = 'Error loading cameras';
+            }
+        }
+
+        // Request permissions and load devices
+        async function initDevices() {
+            try {
+                // Request permission to access media devices
+                await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+                await loadDevices();
+                
+                // Listen for device changes (plug/unplug)
+                navigator.mediaDevices.addEventListener('devicechange', async () => {
+                    console.log('Device change detected, refreshing device list...');
+                    await loadDevices();
+                });
+            } catch (error) {
+                console.error('Error requesting permissions:', error);
+                micStatus.textContent = 'Permission denied for microphones';
+                cameraStatus.textContent = 'Permission denied for cameras';
+            }
+        }
+
+        // Record button handler
+        recordBtn.addEventListener('click', async () => {
+            if (!isRecording) {
+                // Start recording
+                try {
+                    selectedMicId = micSelect.value;
+                    
+                    // Get screen sources (excluding main window)
+                    const { ipcRenderer } = require('electron');
+                    const sources = await ipcRenderer.invoke('get-screen-sources');
+                    
+                    // Find the screen source (not a window)
+                    const screenSource = sources.find(source => source.id.startsWith('screen:'));
+                    
+                    if (!screenSource) {
+                        alert('Could not find screen source for recording');
+                        return;
+                    }
+
+                    // Get microphone audio with enhanced quality settings
+                    let audioConstraints = {
+                        echoCancellation: true,
+                        noiseSuppression: true,
+                        autoGainControl: true,
+                        sampleRate: 48000,
+                        channelCount: 1
+                    };
+                    
+                    if (selectedMicId) {
+                        audioConstraints.deviceId = { exact: selectedMicId };
+                    }
+
+                    const rawAudioStream = await navigator.mediaDevices.getUserMedia({
+                        audio: audioConstraints
+                    });
+
+                    // Create audio context with higher sample rate for better quality
+                    audioContext = new (window.AudioContext || window.webkitAudioContext)({
+                        sampleRate: 48000
+                    });
+                    const audioSource = audioContext.createMediaStreamSource(rawAudioStream);
+                    
+                    // Create gain node to boost volume (1.0x = 100% volume)
+                    gainNode = audioContext.createGain();
+                    gainNode.gain.value = 1.0;
+                    
+                    // Create a compressor/limiter to normalize audio levels and improve clarity
+                    const compressor = audioContext.createDynamicsCompressor();
+                    compressor.threshold.value = -24;
+                    compressor.knee.value = 30;
+                    compressor.ratio.value = 12;
+                    compressor.attack.value = 0.003;
+                    compressor.release.value = 0.25;
+                    
+                    // Create destination to get the processed audio stream
+                    audioDestination = audioContext.createMediaStreamDestination();
+                    
+                    // Connect: source -> gain -> compressor -> destination
+                    audioSource.connect(gainNode);
+                    gainNode.connect(compressor);
+                    compressor.connect(audioDestination);
+                    
+                    // Use the processed audio stream with enhanced clarity
+                    audioStream = audioDestination.stream;
+
+                    // Get screen video stream
+                    videoStream = await navigator.mediaDevices.getUserMedia({
+                        video: {
+                            mandatory: {
+                                chromeMediaSource: 'desktop',
+                                chromeMediaSourceId: screenSource.id
+                            }
+                        },
+                        audio: false
+                    });
+
+                    // Combine audio and video streams
+                    const combinedStream = new MediaStream();
+                    videoStream.getVideoTracks().forEach(track => combinedStream.addTrack(track));
+                    audioStream.getAudioTracks().forEach(track => combinedStream.addTrack(track));
+
+                    recordedChunks = [];
+                    mediaRecorder = new MediaRecorder(combinedStream, {
+                        mimeType: 'video/webm;codecs=vp9,opus'
+                    });
+
+                    mediaRecorder.ondataavailable = (event) => {
+                        if (event.data.size > 0) {
+                            recordedChunks.push(event.data);
+                        }
+                    };
+
+                    mediaRecorder.onstop = async () => {
+                        const blob = new Blob(recordedChunks, { type: 'video/webm' });
+                        const arrayBuffer = await blob.arrayBuffer();
+                        const fileName = `recording-${Date.now()}.webm`;
+                        
+                        // Convert ArrayBuffer to Uint8Array for IPC
+                        const uint8Array = new Uint8Array(arrayBuffer);
+                        
+                        // Send to main process to save
+                        try {
+                            const { ipcRenderer } = require('electron');
+                            await ipcRenderer.invoke('save-recording', Array.from(uint8Array), fileName);
+                            alert('Recording saved to Downloads/boom-box folder!');
+                        } catch (err) {
+                            console.error('Error saving recording:', err);
+                            // Fallback to download
+                            const url = URL.createObjectURL(blob);
+                            const a = document.createElement('a');
+                            a.href = url;
+                            a.download = fileName;
+                            a.click();
+                        }
+                    };
+
+                    mediaRecorder.start();
+                    isRecording = true;
+                    recordBtn.textContent = 'Stop';
+                    recordBtn.classList.add('recording');
+                    playPauseBtn.disabled = false;
+                    playPauseBtn.textContent = 'Pause';
+                    isPaused = false;
+                    playPauseBtn.classList.remove('paused');
+                } catch (error) {
+                    console.error('Error starting recording:', error);
+                    alert('Error starting recording: ' + error.message);
+                }
+            } else {
+                // Stop recording
+                if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                    mediaRecorder.stop();
+                }
+                if (audioStream) {
+                    audioStream.getTracks().forEach(track => track.stop());
+                }
+                if (videoStream) {
+                    videoStream.getTracks().forEach(track => track.stop());
+                }
+                // Clean up audio context
+                if (audioContext) {
+                    audioContext.close().catch(err => console.log('Error closing audio context:', err));
+                    audioContext = null;
+                    gainNode = null;
+                    audioDestination = null;
+                }
+                
+                isRecording = false;
+                recordBtn.textContent = 'Record';
+                recordBtn.classList.remove('recording');
+                playPauseBtn.disabled = true;
+                playPauseBtn.textContent = 'Pause';
+                playPauseBtn.classList.remove('paused');
+            }
+        });
+
+        // Play/Pause button handler
+        playPauseBtn.addEventListener('click', () => {
+            if (!mediaRecorder || !isRecording) return;
+
+            if (isPaused) {
+                // Resume recording
+                mediaRecorder.resume();
+                isPaused = false;
+                playPauseBtn.textContent = 'Pause';
+                playPauseBtn.classList.remove('paused');
+            } else {
+                // Pause recording
+                mediaRecorder.pause();
+                isPaused = true;
+                playPauseBtn.textContent = 'Play';
+                playPauseBtn.classList.add('paused');
+            }
+        });
+
+        // Camera selection handler - send to circle window
+        cameraSelect.addEventListener('change', () => {
+            const selectedCameraId = cameraSelect.value;
+            try {
+                const { ipcRenderer } = require('electron');
+                ipcRenderer.send('camera-selected', selectedCameraId);
+            } catch (e) {
+                console.log('IPC not available:', e);
+            }
+        });
+
+        // Background blur toggle handler
+        blurToggle.addEventListener('change', () => {
+            const enabled = blurToggle.checked;
+            try {
+                const { ipcRenderer } = require('electron');
+                ipcRenderer.send('blur-toggle', enabled);
+            } catch (e) {
+                console.log('IPC not available:', e);
+            }
+        });
+
+        // Initialize on load
+        initDevices();
+        playPauseBtn.disabled = true;
+    </script>
+</body>
+</html>
