@@ -18,12 +18,17 @@ function createWindow() {
     height: windowHeight,
     x: x,
     y: y,
+    resizable: false,
     autoHideMenuBar: true,
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: false
     }
   });
+
+  // Prevent this window from being captured in screen recordings
+  // This is the most reliable way to exclude it
+  win.setContentProtection(true);
 
   // Request media permissions
   win.webContents.session.setPermissionRequestHandler((webContents, permission, callback) => {
@@ -122,18 +127,32 @@ ipcMain.handle('get-screen-sources', async () => {
     thumbnailSize: { width: 0, height: 0 }
   });
   
-  // Get main window properties for filtering
-  let mainWindowInfo = null;
+  // Get main window media source ID for direct matching
+  let mainWindowSourceId = null;
   if (mainWindow && !mainWindow.isDestroyed()) {
-    const bounds = mainWindow.getBounds();
-    const title = mainWindow.getTitle();
-    mainWindowInfo = {
-      title: title,
-      width: bounds.width,
-      height: bounds.height,
-      x: bounds.x,
-      y: bounds.y
-    };
+    try {
+      // Try to get the media source ID directly
+      // This is the most reliable way to identify the window
+      const webContentsId = mainWindow.webContents.id;
+      
+      // The source ID format is typically "window:XXXX:0" where XXXX is the window ID
+      // We'll match by checking if the source ID contains our window's webContents ID
+      // or by matching the window title and bounds
+      const bounds = mainWindow.getBounds();
+      const title = mainWindow.getTitle();
+      
+      // Store for matching
+      mainWindowSourceId = {
+        webContentsId: webContentsId,
+        title: title,
+        width: bounds.width,
+        height: bounds.height,
+        x: bounds.x,
+        y: bounds.y
+      };
+    } catch (error) {
+      console.error('Error getting main window info:', error);
+    }
   }
   
   // Filter out the main window using multiple checks
@@ -144,26 +163,35 @@ ipcMain.handle('get-screen-sources', async () => {
     }
     
     // Exclude window sources that match the main window
-    if (mainWindowInfo && source.name) {
-      // Check by title
-      if (source.name.includes('Boom Box') || 
-          source.name.includes('boom-box') ||
-          source.name.toLowerCase().includes('boom box')) {
+    if (mainWindowSourceId && source.name) {
+      const sourceNameLower = source.name.toLowerCase();
+      
+      // Method 1: Check by title (most common)
+      if (sourceNameLower.includes('boom box') || 
+          sourceNameLower.includes('boom-box') ||
+          sourceNameLower === 'boom box' ||
+          sourceNameLower === 'boom-box') {
         return false;
       }
       
-      // Additional check: if it's a window source, we can be more aggressive
-      // Exclude any window that might be the main window
-      // The main window typically has a specific size (400x600 in our case)
+      // Method 2: Check if it's a window source and might be our main window
+      // Only exclude if it matches our specific characteristics
       if (source.id.startsWith('window:')) {
-        // If the source name matches common Electron window patterns for our app
-        const windowName = source.name.toLowerCase();
-        if (windowName.includes('electron') || 
-            windowName.includes('chromium') ||
-            windowName === 'boom box' ||
-            windowName === 'boom-box') {
+        // Check for Electron/Chromium windows, but be more specific
+        // Only exclude if it matches our window title patterns
+        if ((sourceNameLower.includes('electron') || 
+             sourceNameLower.includes('chromium')) &&
+            (sourceNameLower.includes('boom') || 
+             sourceNameLower === 'boom box' ||
+             sourceNameLower === 'boom-box')) {
           return false;
         }
+      }
+      
+      // Method 3: Try to match by webContents ID if available in source ID
+      // The source ID might contain the window ID
+      if (source.id.includes(String(mainWindowSourceId.webContentsId))) {
+        return false;
       }
     }
     
