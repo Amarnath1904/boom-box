@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, screen, ipcMain, desktopCapturer } = require('electron');
+const { app, BrowserWindow, Menu, screen, ipcMain, desktopCapturer, globalShortcut } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -43,6 +43,7 @@ function createWindow() {
     y: y,
     resizable: false,
     autoHideMenuBar: true,
+    icon: path.join(__dirname, 'boom-box-logo.png'),
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: false
@@ -68,13 +69,9 @@ function createWindow() {
 
   win.loadFile('index.html');
 
-  // Open DevTools for main window in development
-  win.webContents.openDevTools();
-  
-  // Log when DevTools is ready
-  win.webContents.once('devtools-opened', () => {
-    console.log('Main window DevTools opened');
-  });
+  // DevTools can be opened manually with Ctrl+Shift+I (or Cmd+Option+I on Mac)
+  // Uncomment the line below if you want DevTools to open automatically
+  // win.webContents.openDevTools();
 
   // Wait for window to be ready before allowing device access
   win.webContents.once('did-finish-load', () => {
@@ -112,6 +109,7 @@ function createCircleWindow() {
     maxWidth: 800,
     maxHeight: 800,
     aspectRatio: 1, // Force square aspect ratio
+    icon: path.join(__dirname, 'boom-box-logo.png'),
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: false,
@@ -141,13 +139,9 @@ function createCircleWindow() {
 
   circleWin.loadFile('circle.html');
 
-  // Open DevTools for debugging - always open in development
-  circleWin.webContents.openDevTools();
-  
-  // Log when DevTools is ready
-  circleWin.webContents.once('devtools-opened', () => {
-    console.log('Circle window DevTools opened');
-  });
+  // DevTools can be opened manually with Ctrl+Shift+I (or Cmd+Option+I on Mac)
+  // Uncomment the line below if you want DevTools to open automatically
+  // circleWin.webContents.openDevTools();
 
   return circleWin;
 }
@@ -273,20 +267,89 @@ ipcMain.handle('save-recording', async (event, bufferArray, fileName) => {
 });
 
 app.whenReady().then(() => {
+  // Set app icon (for macOS dock and Windows taskbar)
+  if (process.platform === 'darwin') {
+    // macOS dock icon
+    app.dock.setIcon(path.join(__dirname, 'boom-box-logo.png'));
+  }
+  
   createWindow();
   circleWindow = createCircleWindow();
 
+  // Register global shortcut Alt+B to bring app to front
+  const ret = globalShortcut.register('Alt+B', () => {
+    console.log('Alt+B pressed - bringing app to front');
+    
+    // Show and focus main window
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      if (mainWindow.isMinimized()) {
+        mainWindow.restore();
+      }
+      mainWindow.show();
+      mainWindow.focus();
+    } else {
+      // Recreate if destroyed
+      mainWindow = createWindow();
+    }
+    
+    // Show and focus circle window
+    if (circleWindow && !circleWindow.isDestroyed()) {
+      if (circleWindow.isMinimized()) {
+        circleWindow.restore();
+      }
+      circleWindow.show();
+      circleWindow.focus();
+    } else {
+      // Recreate if destroyed
+      circleWindow = createCircleWindow();
+    }
+  });
+
+  if (!ret) {
+    console.log('Failed to register Alt+B shortcut');
+  } else {
+    console.log('✓ Global shortcut Alt+B registered - press Alt+B to bring app to front');
+  }
+
   app.on('activate', () => {
+    // On macOS, when dock icon is clicked
     if (BrowserWindow.getAllWindows().length === 0) {
       createWindow();
       circleWindow = createCircleWindow();
+    } else {
+      // Bring existing windows to front
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.show();
+        mainWindow.focus();
+      }
+      if (circleWindow && !circleWindow.isDestroyed()) {
+        circleWindow.show();
+        circleWindow.focus();
+      }
     }
   });
 });
 
+// Keep app running in background - don't quit when windows are closed
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    app.quit();
+  // On macOS, apps typically stay active even when all windows are closed
+  // On Windows/Linux, we'll keep the app running in the background
+  // The app will only quit when explicitly requested (e.g., from system tray or menu)
+  if (process.platform === 'darwin') {
+    // macOS behavior - app stays active
+  } else {
+    // Windows/Linux - keep app running in background
+    // Windows will be hidden, not destroyed
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.hide();
+    }
+    if (circleWindow && !circleWindow.isDestroyed()) {
+      circleWindow.hide();
+    }
   }
 });
 
+// Unregister all shortcuts when app quits
+app.on('will-quit', () => {
+  globalShortcut.unregisterAll();
+});
