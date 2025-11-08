@@ -1,4 +1,5 @@
 # 🎤 boom-box
+<img width="1024" height="1024" alt="Gemini_Generated_Image_onqm27onqm27onqm" src="https://github.com/user-attachments/assets/f36e980b-faf5-4cc5-a0d4-02eb0fc738b8" />
 
 **Not Loom, but better... maybe? I don't know.** 🤷‍♂️
 
