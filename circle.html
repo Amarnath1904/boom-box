@@ -200,7 +200,11 @@
         let selectedCameraId = null;
         let blurEnabled = false;
         let selfieSegmentation = null;
-        let camera = null;
+        let camera = null; // MediaPipe Camera utility, now unused
+        let frameProcessor = null; // For manual frame processing
+        let streamMonitorInterval = null; // For monitoring stream health
+        let reconnectAttempts = 0;
+        const MAX_RECONNECT_ATTEMPTS = 5;
 
         // Try to get window for resize functionality (optional)
         let win = null;
@@ -214,22 +218,53 @@
         // Listen for camera updates from main window
         try {
             const { ipcRenderer } = require('electron');
+            console.log('✓ IPC Renderer available, setting up listeners...');
+            
             ipcRenderer.on('update-camera', (event, cameraId) => {
+                console.log('========================================');
+                console.log('📹 CAMERA SELECTION RECEIVED');
+                console.log('Camera ID:', cameraId || '(default/empty)');
+                console.log('Current selectedCameraId before update:', selectedCameraId);
                 selectedCameraId = cameraId;
-                updateCamera();
+                console.log('Updated selectedCameraId to:', selectedCameraId);
+                // Only update if we have a valid camera ID, or if it's explicitly empty (to clear)
+                if (cameraId || cameraId === '') {
+                    console.log('Calling updateCamera()...');
+                    updateCamera();
+                } else {
+                    console.warn('⚠ Camera ID is null/undefined, not updating');
+                }
+                console.log('========================================');
             });
+            
+            console.log('✓ Camera update listener registered');
             
             // Listen for blur toggle updates
             ipcRenderer.on('update-blur', (event, enabled) => {
-                console.log('Blur toggle received:', enabled);
+                console.log('Blur toggle received:', enabled, 'Current camera:', selectedCameraId);
                 blurEnabled = enabled;
                 if (blurEnabled) {
                     // Wait a bit for video to be ready, then initialize
+                    // Make sure we have the current stream and it's using the selected camera
                     if (currentStream && video && video.readyState >= video.HAVE_METADATA) {
-                        console.log('Initializing MediaPipe...');
-                        setTimeout(() => initializeMediaPipe(), 100);
+                        console.log('Initializing MediaPipe for current camera:', selectedCameraId || 'default');
+                        // Verify the current stream is still using the selected camera
+                        const videoTrack = currentStream.getVideoTracks()[0];
+                        if (videoTrack && selectedCameraId) {
+                            const currentDeviceId = videoTrack.getSettings().deviceId;
+                            if (currentDeviceId !== selectedCameraId) {
+                                console.warn('Camera mismatch! Current:', currentDeviceId, 'Expected:', selectedCameraId);
+                                console.log('Reinitializing camera with correct device...');
+                                // Reinitialize with the correct camera
+                                updateCamera();
+                                return;
+                            }
+                        }
+                        // Stop any existing MediaPipe first
+                        stopMediaPipe();
+                        setTimeout(() => initializeMediaPipe(), 200);
                     } else {
-                        console.log('Video not ready yet, will initialize when ready');
+                        console.log('Video not ready yet, will initialize when camera loads');
                         // Will be initialized in updateCamera when video loads
                     }
                 } else {
@@ -323,6 +358,26 @@
                 // Stop existing MediaPipe if running
                 stopMediaPipe();
                 
+                // Verify we have the correct camera stream before initializing
+                if (!video || !video.srcObject) {
+                    throw new Error('No video stream available');
+                }
+                
+                // Check that the current stream is using the selected camera
+                const videoTrack = currentStream ? currentStream.getVideoTracks()[0] : null;
+                if (videoTrack && selectedCameraId) {
+                    const currentDeviceId = videoTrack.getSettings().deviceId;
+                    if (currentDeviceId !== selectedCameraId) {
+                        console.warn('Camera device mismatch detected. Reinitializing camera...');
+                        console.log('Current device:', currentDeviceId, 'Expected:', selectedCameraId);
+                        // Don't initialize MediaPipe yet - let updateCamera fix the camera first
+                        updateCamera();
+                        return;
+                    }
+                }
+                
+                console.log('Initializing MediaPipe with camera:', selectedCameraId || 'default');
+                
                 // Wait for scripts to load if they're still loading
                 let retries = 0;
                 while ((typeof SelfieSegmentation === 'undefined' || typeof Camera === 'undefined') && retries < 50) {
@@ -348,18 +403,31 @@
                 
                 selfieSegmentation.onResults(onResults);
                 
-                // Start camera processing
-                camera = new Camera(video, {
-                    onFrame: async () => {
-                        if (selfieSegmentation && video.readyState === video.HAVE_ENOUGH_DATA) {
+                // Process frames manually from the existing video stream
+                // This ensures we use the current camera without MediaPipe Camera utility trying to access it directly
+                // We don't use the Camera utility class - we process frames directly from the video element
+                const processFrame = async () => {
+                    if (selfieSegmentation && video && video.readyState === video.HAVE_ENOUGH_DATA && blurEnabled) {
+                        try {
                             await selfieSegmentation.send({ image: video });
+                        } catch (err) {
+                            console.error('Error processing frame:', err);
                         }
-                    },
-                    width: 640,
-                    height: 640
-                });
+                    }
+                    if (blurEnabled) {
+                        frameProcessor = requestAnimationFrame(processFrame);
+                    }
+                };
                 
-                camera.start();
+                if (video && video.readyState >= video.HAVE_METADATA) {
+                    // Start processing frames immediately
+                    processFrame();
+                } else {
+                    // Wait for video to be ready
+                    video.addEventListener('loadedmetadata', () => {
+                        processFrame();
+                    }, { once: true });
+                }
                 
                 // Hide video, show canvas
                 video.style.display = 'none';
@@ -370,7 +438,7 @@
                     canvas.style.zIndex = '10';
                 }
                 
-                console.log('MediaPipe initialized and camera started');
+                console.log('MediaPipe initialized with existing video stream');
             } catch (err) {
                 console.error('Error initializing MediaPipe:', err);
                 console.error('Error details:', err.message, err.stack);
@@ -384,12 +452,25 @@
         
         // Stop MediaPipe processing
         function stopMediaPipe() {
+            // Stop frame processing
+            if (frameProcessor) {
+                cancelAnimationFrame(frameProcessor);
+                frameProcessor = null;
+            }
             if (camera) {
-                camera.stop();
+                try {
+                    camera.stop();
+                } catch (e) {
+                    console.log('Error stopping camera:', e);
+                }
                 camera = null;
             }
             if (selfieSegmentation) {
-                selfieSegmentation.close();
+                try {
+                    selfieSegmentation.close();
+                } catch (e) {
+                    console.log('Error closing segmentation:', e);
+                }
                 selfieSegmentation = null;
             }
         }
@@ -402,58 +483,122 @@
             }
             
             try {
-                // Set canvas size to match video
-                const width = video.videoWidth || 640;
-                const height = video.videoHeight || 640;
+                // Get the actual display size of the canvas (which is circular/square)
+                const displayWidth = canvas.offsetWidth || 640;
+                const displayHeight = canvas.offsetHeight || 640;
                 
-                if (canvas.width !== width || canvas.height !== height) {
-                    canvas.width = width;
-                    canvas.height = height;
+                // Set canvas size to match display size (square to fill circle)
+                const size = Math.max(displayWidth, displayHeight);
+                if (canvas.width !== size || canvas.height !== size) {
+                    canvas.width = size;
+                    canvas.height = size;
+                }
+                
+                // Get the source image dimensions from MediaPipe results
+                const sourceWidth = results.image.width || results.image.videoWidth || 640;
+                const sourceHeight = results.image.height || results.image.videoHeight || 640;
+                
+                // Calculate scaling to fill the entire square canvas (cover mode - no black bars)
+                const sourceAspect = sourceWidth / sourceHeight;
+                
+                let drawWidth, drawHeight, drawX, drawY;
+                
+                // Calculate scaling to fill the entire square canvas (cover mode)
+                // We want to scale the image so it completely fills the canvas, cropping if necessary
+                let scale;
+                if (sourceAspect > 1) {
+                    // Source is wider than tall - scale to fill height, crop sides
+                    scale = size / sourceHeight;
+                    drawHeight = size;
+                    drawWidth = sourceWidth * scale;
+                    drawX = (size - drawWidth) / 2; // Center horizontally, crop sides
+                    drawY = 0;
+                } else {
+                    // Source is taller than wide - scale to fill width, crop top/bottom
+                    scale = size / sourceWidth;
+                    drawWidth = size;
+                    drawHeight = sourceHeight * scale;
+                    drawX = 0;
+                    drawY = (size - drawHeight) / 2; // Center vertically, crop top/bottom
+                }
+                
+                // Calculate source crop coordinates if we need to crop
+                let srcX = 0, srcY = 0, srcWidth = sourceWidth, srcHeight = sourceHeight;
+                
+                if (drawX < 0) {
+                    // Need to crop from left/right sides of source
+                    const cropAmount = Math.abs(drawX) / scale;
+                    srcX = cropAmount;
+                    srcWidth = sourceWidth - (cropAmount * 2);
+                    drawX = 0;
+                    drawWidth = size;
+                }
+                
+                if (drawY < 0) {
+                    // Need to crop from top/bottom of source
+                    const cropAmount = Math.abs(drawY) / scale;
+                    srcY = cropAmount;
+                    srcHeight = sourceHeight - (cropAmount * 2);
+                    drawY = 0;
+                    drawHeight = size;
                 }
                 
                 // Clear canvas
-                ctx.clearRect(0, 0, width, height);
+                ctx.clearRect(0, 0, size, size);
                 
                 if (!results.segmentationMask) {
                     console.warn('No segmentation mask available, drawing image without blur');
-                    // Fallback: just draw the image
-                    ctx.drawImage(results.image, 0, 0, width, height);
+                    // Fallback: just draw the image with proper scaling to fill circle
+                    ctx.drawImage(results.image, srcX, srcY, srcWidth, srcHeight, drawX, drawY, drawWidth, drawHeight);
                     return;
                 }
                 
                 // Create a temporary canvas for the blurred background
                 const blurCanvas = document.createElement('canvas');
-                blurCanvas.width = width;
-                blurCanvas.height = height;
+                blurCanvas.width = size;
+                blurCanvas.height = size;
                 const blurCtx = blurCanvas.getContext('2d');
                 
-                // Draw blurred version of the image
+                // Draw blurred version of the image with proper scaling to fill circle
                 blurCtx.filter = 'blur(15px)';
-                blurCtx.drawImage(results.image, 0, 0, width, height);
+                // Draw the source image scaled to fill the entire canvas (crop if needed)
+                blurCtx.drawImage(results.image, srcX, srcY, srcWidth, srcHeight, drawX, drawY, drawWidth, drawHeight);
                 blurCtx.filter = 'none';
                 
                 // Draw the blurred background on main canvas
-                ctx.drawImage(blurCanvas, 0, 0, width, height);
+                ctx.drawImage(blurCanvas, 0, 0, size, size);
                 
                 // Create another temp canvas for the sharp person
                 const personCanvas = document.createElement('canvas');
-                personCanvas.width = width;
-                personCanvas.height = height;
+                personCanvas.width = size;
+                personCanvas.height = size;
                 const personCtx = personCanvas.getContext('2d');
                 
-                // Draw the original sharp image
-                personCtx.drawImage(results.image, 0, 0, width, height);
+                // Draw the original sharp image with proper scaling
+                personCtx.drawImage(results.image, srcX, srcY, srcWidth, srcHeight, drawX, drawY, drawWidth, drawHeight);
+                
+                // Scale and position the mask to match
+                const maskCanvas = document.createElement('canvas');
+                maskCanvas.width = size;
+                maskCanvas.height = size;
+                const maskCtx = maskCanvas.getContext('2d');
+                const maskWidth = results.segmentationMask.width || sourceWidth;
+                const maskHeight = results.segmentationMask.height || sourceHeight;
+                // Calculate mask crop coordinates to match image crop
+                const maskSrcX = (srcX / sourceWidth) * maskWidth;
+                const maskSrcY = (srcY / sourceHeight) * maskHeight;
+                const maskSrcWidth = (srcWidth / sourceWidth) * maskWidth;
+                const maskSrcHeight = (srcHeight / sourceHeight) * maskHeight;
+                maskCtx.drawImage(results.segmentationMask, maskSrcX, maskSrcY, maskSrcWidth, maskSrcHeight, drawX, drawY, drawWidth, drawHeight);
                 
                 // Apply mask to keep only the person (white areas in mask)
                 personCtx.globalCompositeOperation = 'destination-in';
-                personCtx.drawImage(results.segmentationMask, 0, 0, width, height);
+                personCtx.drawImage(maskCanvas, 0, 0, size, size);
                 
-                // Draw the sharp person on top of the blurred background
+                // Composite the sharp person on top of the blurred background
                 ctx.globalCompositeOperation = 'source-over';
-                ctx.drawImage(personCanvas, 0, 0, width, height);
-                
-                // Reset composite operation
-                ctx.globalCompositeOperation = 'source-over';
+                ctx.drawImage(personCanvas, 0, 0, size, size);
+                ctx.globalCompositeOperation = 'source-over'; // Reset
                 
             } catch (err) {
                 console.error('Error in onResults:', err);
@@ -471,69 +616,378 @@
                 currentStream = null;
             }
 
+            // Clear video srcObject to ensure clean state
+            if (video) {
+                video.srcObject = null;
+                video.style.display = 'none';
+                canvas.style.display = 'none';
+            }
+
             try {
                 loading.textContent = 'Requesting camera access...';
                 loading.style.display = 'block';
                 error.style.display = 'none';
                 
+                console.log('=== updateCamera called ===');
+                console.log('Selected camera ID:', selectedCameraId || 'default');
+                console.log('navigator.mediaDevices available:', !!navigator.mediaDevices);
+                console.log('getUserMedia available:', !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia));
+                
+                if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                    throw new Error('Media devices API not available. Please check browser permissions.');
+                }
+                
                 const constraints = {
                     video: selectedCameraId ? 
-                        { deviceId: { exact: selectedCameraId }, width: { ideal: 640 }, height: { ideal: 640 } } :
-                        { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 640 } }
+                        { 
+                            deviceId: { exact: selectedCameraId }, 
+                            width: { ideal: 1280, min: 640 }, 
+                            height: { ideal: 720, min: 480 }
+                        } :
+                        { 
+                            width: { ideal: 1280, min: 640 }, 
+                            height: { ideal: 720, min: 480 }
+                        }
                 };
                 
+                console.log('Camera constraints:', JSON.stringify(constraints));
+                console.log('Calling getUserMedia...');
+                
+                loading.textContent = 'Accessing camera...';
+                
                 const stream = await navigator.mediaDevices.getUserMedia(constraints);
+                console.log('✓ Camera stream obtained successfully');
+                console.log('Stream tracks:', stream.getTracks().map(t => ({ kind: t.kind, label: t.label, enabled: t.enabled, muted: t.muted, readyState: t.readyState })));
                 currentStream = stream;
+                reconnectAttempts = 0; // Reset reconnect attempts on successful connection
+                
+                // Monitor stream health
+                setupStreamMonitoring(stream);
+                
+                if (!video) {
+                    console.error('Video element not found!');
+                    error.textContent = 'Video element not found';
+                    error.style.display = 'block';
+                    loading.style.display = 'none';
+                    return;
+                }
                 
                 if (video) {
+                    console.log('Setting video srcObject...');
                     video.srcObject = stream;
+                    video.muted = true; // Mute to allow autoplay
+                    video.playsInline = true;
+                    video.autoplay = true;
                     
-                    // Wait for video to load
-                    video.onloadedmetadata = () => {
-                        video.play().then(() => {
+                    loading.textContent = 'Loading video stream...';
+                    
+                    let videoReadyHandled = false;
+                    
+                    // Function to handle video ready state
+                    const handleVideoReady = async () => {
+                        if (videoReadyHandled) {
+                            console.log('Video ready already handled, skipping...');
+                            return;
+                        }
+                        videoReadyHandled = true;
+                        
+                        console.log('Video ready state:', video.readyState, '(HAVE_METADATA=' + video.HAVE_METADATA + ', HAVE_ENOUGH_DATA=' + video.HAVE_ENOUGH_DATA + ')');
+                        console.log('Video dimensions:', video.videoWidth + 'x' + video.videoHeight);
+                        
+                        try {
+                            console.log('Attempting to play video...');
+                            await video.play();
+                            console.log('✓ Video playing successfully');
                             loading.style.display = 'none';
                             error.style.display = 'none';
                             
-                            // Initialize MediaPipe if blur is enabled
+                            // Initialize MediaPipe if blur is enabled, regardless of which camera
                             if (blurEnabled) {
-                                console.log('Camera loaded, initializing MediaPipe with blur enabled');
-                                setTimeout(() => initializeMediaPipe(), 200);
+                                console.log('Camera loaded, initializing MediaPipe with blur enabled for camera:', selectedCameraId || 'default');
+                                setTimeout(() => {
+                                    initializeMediaPipe();
+                                }, 300);
+                            } else {
+                                video.style.display = 'block';
+                                canvas.style.display = 'none';
+                                console.log('✓ Video displayed (no blur)');
+                            }
+                        } catch (err) {
+                            console.error('✗ Error playing video:', err);
+                            console.error('Error details:', err.name, err.message);
+                            // Still try to show video or initialize MediaPipe
+                            loading.style.display = 'none';
+                            if (blurEnabled) {
+                                setTimeout(() => initializeMediaPipe(), 300);
                             } else {
                                 video.style.display = 'block';
                                 canvas.style.display = 'none';
                             }
-                        }).catch(err => {
-                            console.error('Error playing video:', err);
-                            loading.style.display = 'none';
-                            error.style.display = 'none';
-                        });
+                        }
                     };
                     
-                    // Also try to play immediately
-                    video.play().catch(err => {
-                        console.log('Initial play failed, will retry on metadata:', err);
+                    // Multiple event listeners to catch video ready state
+                    video.addEventListener('loadedmetadata', () => {
+                        console.log('Video loadedmetadata event');
+                        handleVideoReady();
+                    }, { once: true });
+                    
+                    video.addEventListener('loadeddata', () => {
+                        console.log('Video loadeddata event');
+                        handleVideoReady();
+                    }, { once: true });
+                    
+                    video.addEventListener('canplay', () => {
+                        console.log('Video canplay event');
+                        handleVideoReady();
+                    }, { once: true });
+                    
+                    video.addEventListener('playing', () => {
+                        console.log('Video playing event');
+                        loading.style.display = 'none';
+                        error.style.display = 'none';
+                    }, { once: true });
+                    
+                    // Check if metadata is already loaded
+                    if (video.readyState >= video.HAVE_METADATA) {
+                        console.log('Video metadata already loaded (readyState:', video.readyState, ')');
+                        setTimeout(() => handleVideoReady(), 100);
+                    }
+                    
+                    // Try to play immediately
+                    video.play().then(() => {
+                        console.log('Video play() succeeded immediately');
+                        loading.style.display = 'none';
+                        if (!blurEnabled) {
+                            video.style.display = 'block';
+                            canvas.style.display = 'none';
+                        }
+                    }).catch(err => {
+                        console.log('Initial play attempt failed, will wait for events:', err);
                     });
+                    
+                    // Aggressive fallback - hide loading after 5 seconds if video has any data
+                    setTimeout(() => {
+                        if (loading.style.display !== 'none') {
+                            console.warn('⚠ Fallback timeout: Video still loading after 5 seconds');
+                            console.log('Video readyState:', video.readyState);
+                            console.log('Video srcObject:', !!video.srcObject);
+                            console.log('Stream active:', stream.active);
+                            console.log('Stream tracks:', stream.getTracks().map(t => ({ kind: t.kind, readyState: t.readyState, enabled: t.enabled })));
+                            
+                            if (video.readyState >= video.HAVE_METADATA) {
+                                console.log('Video has metadata, attempting to show...');
+                                video.play().then(() => {
+                                    console.log('✓ Video play succeeded in fallback');
+                                    loading.style.display = 'none';
+                                    if (!blurEnabled) {
+                                        video.style.display = 'block';
+                                        canvas.style.display = 'none';
+                                    }
+                                }).catch((playErr) => {
+                                    console.error('✗ Video play failed in fallback:', playErr);
+                                    // Even if play fails, hide loading and show video
+                                    loading.style.display = 'none';
+                                    if (!blurEnabled) {
+                                        video.style.display = 'block';
+                                        canvas.style.display = 'none';
+                                    }
+                                });
+                            } else {
+                                // Video still not ready, show error
+                                console.error('✗ Video still not ready after timeout');
+                                console.error('Stream tracks state:', stream.getTracks().map(t => ({
+                                    kind: t.kind,
+                                    readyState: t.readyState,
+                                    enabled: t.enabled,
+                                    muted: t.muted,
+                                    label: t.label
+                                })));
+                                error.textContent = 'Camera stream obtained but video not loading. Stream readyState: ' + video.readyState + '. Please check your camera.';
+                                error.style.display = 'block';
+                                loading.style.display = 'none';
+                            }
+                        }
+                    }, 5000);
                     
                     video.onerror = (err) => {
                         console.error('Video error:', err);
-                        error.textContent = 'Video error occurred';
+                        error.textContent = 'Video error occurred: ' + (err.message || 'Unknown error');
                         error.style.display = 'block';
                         loading.style.display = 'none';
+                        // Try to reconnect on video error
+                        attemptReconnect();
                     };
                 }
             } catch (err) {
-                console.error('Error accessing camera:', err);
+                console.error('✗ Error accessing camera:', err);
+                console.error('Error name:', err.name);
+                console.error('Error message:', err.message);
+                console.error('Error stack:', err.stack);
                 loading.style.display = 'none';
-                error.textContent = 'Camera access denied: ' + err.message;
+                
+                let errorMsg = 'Camera access error: ';
+                if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+                    errorMsg = 'Camera permission denied. Please allow camera access in settings.';
+                } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+                    errorMsg = 'No camera found. Please connect a camera and try again.';
+                } else if (err.name === 'NotReadableError' || err.name === 'TrackStartError') {
+                    errorMsg = 'Camera is being used by another application. Please close other apps using the camera.';
+                } else if (err.name === 'OverconstrainedError' || err.name === 'ConstraintNotSatisfiedError') {
+                    errorMsg = 'Camera does not support requested settings. Error: ' + err.message;
+                } else {
+                    errorMsg = 'Camera error: ' + err.message;
+                }
+                
+                error.textContent = errorMsg;
                 error.style.display = 'block';
             }
         }
 
-        // Start camera when page loads
-        updateCamera();
+        // Function to monitor stream health and detect disconnections
+        function setupStreamMonitoring(stream) {
+            // Clear any existing monitor
+            if (streamMonitorInterval) {
+                clearInterval(streamMonitorInterval);
+                streamMonitorInterval = null;
+            }
+            
+            // Monitor video track state
+            const videoTrack = stream.getVideoTracks()[0];
+            if (videoTrack) {
+                videoTrack.onended = () => {
+                    console.warn('Video track ended unexpectedly');
+                    attemptReconnect();
+                };
+                
+                videoTrack.onmute = () => {
+                    console.warn('Video track muted');
+                };
+                
+                videoTrack.onunmute = () => {
+                    console.log('Video track unmuted');
+                };
+            }
+            
+            // Periodic health check
+            streamMonitorInterval = setInterval(() => {
+                if (!currentStream) {
+                    console.warn('Stream is null, attempting reconnect...');
+                    attemptReconnect();
+                    return;
+                }
+                
+                const videoTrack = currentStream.getVideoTracks()[0];
+                if (!videoTrack || videoTrack.readyState === 'ended') {
+                    console.warn('Video track ended or missing, attempting reconnect...');
+                    attemptReconnect();
+                    return;
+                }
+                
+                // Check if video element is paused or not playing
+                if (video && (video.paused || video.readyState === 0)) {
+                    console.warn('Video is paused or not ready, attempting to resume...');
+                    video.play().catch(err => {
+                        console.error('Failed to resume video:', err);
+                        attemptReconnect();
+                    });
+                }
+                
+                // Check if video is showing black/dark frames (might indicate stream issue)
+                if (video && video.readyState >= video.HAVE_CURRENT_DATA) {
+                    // This is a simple check - if video exists but seems stuck, try to reconnect
+                    const currentTime = video.currentTime;
+                    setTimeout(() => {
+                        if (video && Math.abs(video.currentTime - currentTime) < 0.1 && !video.paused) {
+                            console.warn('Video appears stuck, attempting reconnect...');
+                            attemptReconnect();
+                        }
+                    }, 1000);
+                }
+            }, 2000); // Check every 2 seconds
+        }
+        
+        // Function to attempt reconnection
+        async function attemptReconnect() {
+            if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+                console.error('Max reconnect attempts reached');
+                error.textContent = 'Camera disconnected. Please refresh or check your camera connection.';
+                error.style.display = 'block';
+                if (streamMonitorInterval) {
+                    clearInterval(streamMonitorInterval);
+                    streamMonitorInterval = null;
+                }
+                return;
+            }
+            
+            reconnectAttempts++;
+            console.log(`Attempting to reconnect camera (attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`);
+            
+            // Clean up current stream
+            if (currentStream) {
+                currentStream.getTracks().forEach(track => track.stop());
+                currentStream = null;
+            }
+            
+            // Stop MediaPipe
+            stopMediaPipe();
+            
+            // Clear video
+            if (video) {
+                video.srcObject = null;
+            }
+            
+            // Wait a bit before reconnecting
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            
+            // Reconnect
+            try {
+                await updateCamera();
+            } catch (err) {
+                console.error('Reconnection failed:', err);
+                // Retry after a delay
+                setTimeout(() => {
+                    if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+                        attemptReconnect();
+                    }
+                }, 2000);
+            }
+        }
+
+        // Don't start camera immediately - wait for selection from main window
+        // The main window will send a camera selection after it loads devices
+        console.log('========================================');
+        console.log('🔄 CIRCLE WINDOW INITIALIZED');
+        console.log('Initial selectedCameraId:', selectedCameraId);
+        console.log('Video element:', !!video);
+        console.log('Canvas element:', !!canvas);
+        console.log('Loading element:', !!loading);
+        console.log('Waiting for camera selection from main window...');
+        console.log('========================================');
+        
+        // Hide loading initially - it will show when we actually try to load the camera
+        loading.style.display = 'none';
+        
+        // Fallback: Try to load default camera after 3 seconds if no selection received
+        setTimeout(() => {
+            console.log('⏰ 3-second timeout check...');
+            console.log('selectedCameraId:', selectedCameraId);
+            if (!selectedCameraId) {
+                console.log('⚠ No camera selection received after 3 seconds, attempting to load default camera...');
+                loading.style.display = 'block';
+                loading.textContent = 'Loading default camera...';
+                updateCamera();
+            } else {
+                console.log('✓ Camera selection already received, no fallback needed');
+            }
+        }, 3000);
 
         // Clean up stream when window closes
         window.addEventListener('beforeunload', () => {
+            if (streamMonitorInterval) {
+                clearInterval(streamMonitorInterval);
+                streamMonitorInterval = null;
+            }
             stopMediaPipe();
             if (currentStream) {
                 currentStream.getTracks().forEach(track => track.stop());

@@ -3,6 +3,29 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 
+// Enable hot reload in development
+if (!app.isPackaged) {
+  try {
+    // On Windows, use electron.cmd, on Unix use electron
+    const electronPath = process.platform === 'win32' 
+      ? path.join(__dirname, 'node_modules', '.bin', 'electron.cmd')
+      : path.join(__dirname, 'node_modules', '.bin', 'electron');
+    
+    require('electron-reload')(__dirname, {
+      electron: electronPath,
+      hardResetMethod: 'exit',
+      ignore: [
+        /node_modules/,
+        /\.git/,
+        /Downloads/
+      ]
+    });
+    console.log('🔥 Hot reload enabled - changes will auto-reload');
+  } catch (error) {
+    console.log('Hot reload not available:', error.message);
+  }
+}
+
 let circleWindow = null;
 let mainWindow = null;
 
@@ -30,9 +53,10 @@ function createWindow() {
   // This is the most reliable way to exclude it
   win.setContentProtection(true);
 
-  // Request media permissions
+  // Request media permissions - auto-approve for main window
   win.webContents.session.setPermissionRequestHandler((webContents, permission, callback) => {
-    if (permission === 'media') {
+    if (permission === 'media' || permission === 'camera' || permission === 'microphone') {
+      console.log('Auto-approving media permission for main window');
       callback(true);
     } else {
       callback(false);
@@ -43,6 +67,19 @@ function createWindow() {
   Menu.setApplicationMenu(null);
 
   win.loadFile('index.html');
+
+  // Open DevTools for main window in development
+  win.webContents.openDevTools();
+  
+  // Log when DevTools is ready
+  win.webContents.once('devtools-opened', () => {
+    console.log('Main window DevTools opened');
+  });
+
+  // Wait for window to be ready before allowing device access
+  win.webContents.once('did-finish-load', () => {
+    console.log('Main window finished loading');
+  });
 
   // Close circle window when main window closes
   win.on('close', () => {
@@ -89,9 +126,10 @@ function createCircleWindow() {
     circleWin.setSize(size, size);
   });
 
-  // Request media permissions for circle window
+  // Request media permissions - auto-approve for circle window
   circleWin.webContents.session.setPermissionRequestHandler((webContents, permission, callback) => {
-    if (permission === 'media') {
+    if (permission === 'media' || permission === 'camera' || permission === 'microphone') {
+      console.log('Auto-approving media permission for circle window');
       callback(true);
     } else {
       callback(false);
@@ -102,6 +140,14 @@ function createCircleWindow() {
   Menu.setApplicationMenu(null);
 
   circleWin.loadFile('circle.html');
+
+  // Open DevTools for debugging - always open in development
+  circleWin.webContents.openDevTools();
+  
+  // Log when DevTools is ready
+  circleWin.webContents.once('devtools-opened', () => {
+    console.log('Circle window DevTools opened');
+  });
 
   return circleWin;
 }

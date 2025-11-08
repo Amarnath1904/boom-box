@@ -360,9 +360,14 @@
         // Load available devices
         async function loadDevices() {
             try {
+                console.log('Enumerating devices...');
                 const devices = await navigator.mediaDevices.enumerateDevices();
+                console.log('Total devices found:', devices.length);
+                
                 const audioInputs = devices.filter(device => device.kind === 'audioinput');
                 const videoInputs = devices.filter(device => device.kind === 'videoinput');
+                
+                console.log('Audio inputs:', audioInputs.length, 'Video inputs:', videoInputs.length);
 
                 // Store currently selected values
                 const currentMicId = micSelect.value;
@@ -370,39 +375,59 @@
 
                 // Populate microphone dropdown
                 micSelect.innerHTML = '';
-                audioInputs.forEach((device, index) => {
+                if (audioInputs.length === 0) {
                     const option = document.createElement('option');
-                    option.value = device.deviceId;
-                    option.textContent = device.label || `Microphone ${index + 1}`;
+                    option.value = '';
+                    option.textContent = 'No microphones available';
                     micSelect.appendChild(option);
-                });
+                } else {
+                    audioInputs.forEach((device, index) => {
+                        const option = document.createElement('option');
+                        option.value = device.deviceId;
+                        option.textContent = device.label || `Microphone ${index + 1}`;
+                        micSelect.appendChild(option);
+                    });
+                }
 
                 // Restore selected microphone if it still exists, otherwise select first/default
-                if (currentMicId && audioInputs.some(device => device.deviceId === currentMicId)) {
-                    micSelect.value = currentMicId;
-                } else if (audioInputs.length > 0) {
-                    micSelect.value = audioInputs[0].deviceId;
+                if (audioInputs.length > 0) {
+                    if (currentMicId && audioInputs.some(device => device.deviceId === currentMicId)) {
+                        micSelect.value = currentMicId;
+                    } else {
+                        micSelect.value = audioInputs[0].deviceId;
+                    }
                 }
 
                 // Populate camera dropdown
                 cameraSelect.innerHTML = '';
-                videoInputs.forEach((device, index) => {
+                if (videoInputs.length === 0) {
                     const option = document.createElement('option');
-                    option.value = device.deviceId;
-                    option.textContent = device.label || `Camera ${index + 1}`;
+                    option.value = '';
+                    option.textContent = 'No cameras available';
                     cameraSelect.appendChild(option);
-                });
+                } else {
+                    videoInputs.forEach((device, index) => {
+                        const option = document.createElement('option');
+                        option.value = device.deviceId;
+                        option.textContent = device.label || `Camera ${index + 1}`;
+                        cameraSelect.appendChild(option);
+                    });
+                }
 
                 // Restore selected camera if it still exists, otherwise select first/default
                 let cameraChanged = false;
+                let selectedCameraId = null;
                 if (currentCameraId && videoInputs.some(device => device.deviceId === currentCameraId)) {
                     cameraSelect.value = currentCameraId;
+                    selectedCameraId = currentCameraId;
                 } else {
                     if (videoInputs.length > 0) {
                         cameraSelect.value = videoInputs[0].deviceId;
+                        selectedCameraId = videoInputs[0].deviceId;
                         cameraChanged = true;
                     } else {
                         cameraSelect.value = '';
+                        selectedCameraId = '';
                         // If camera was selected and removed, update circle window
                         if (currentCameraId) {
                             try {
@@ -415,14 +440,22 @@
                     }
                 }
                 
-                // If camera was auto-selected, notify circle window
-                if (cameraChanged && videoInputs.length > 0) {
+                // Always notify circle window of camera selection (auto-selected or restored)
+                if (selectedCameraId !== null) {
                     try {
                         const { ipcRenderer } = require('electron');
-                        ipcRenderer.send('camera-selected', videoInputs[0].deviceId);
+                        console.log('========================================');
+                        console.log('📤 SENDING CAMERA SELECTION TO CIRCLE WINDOW');
+                        console.log('Camera ID:', selectedCameraId || '(empty/none)');
+                        console.log('Total cameras found:', videoInputs.length);
+                        ipcRenderer.send('camera-selected', selectedCameraId);
+                        console.log('✓ IPC message sent');
+                        console.log('========================================');
                     } catch (e) {
-                        console.log('IPC not available:', e);
+                        console.error('✗ IPC not available:', e);
                     }
+                } else {
+                    console.warn('⚠ selectedCameraId is null, not sending to circle window');
                 }
 
                 if (audioInputs.length > 0) {
@@ -446,19 +479,42 @@
         // Request permissions and load devices
         async function initDevices() {
             try {
+                console.log('Checking if mediaDevices is available...');
+                if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                    throw new Error('Media devices API not available');
+                }
+                
+                console.log('Requesting media device permissions...');
                 // Request permission to access media devices
-                await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+                console.log('Permissions granted, stopping test stream...');
+                // Stop the test stream immediately - we just needed it for permissions
+                stream.getTracks().forEach(track => track.stop());
+                
+                console.log('Loading device list...');
                 await loadDevices();
                 
                 // Listen for device changes (plug/unplug)
-                navigator.mediaDevices.addEventListener('devicechange', async () => {
-                    console.log('Device change detected, refreshing device list...');
-                    await loadDevices();
-                });
+                if (navigator.mediaDevices.addEventListener) {
+                    navigator.mediaDevices.addEventListener('devicechange', async () => {
+                        console.log('Device change detected, refreshing device list...');
+                        await loadDevices();
+                    });
+                }
             } catch (error) {
                 console.error('Error requesting permissions:', error);
-                micStatus.textContent = 'Permission denied for microphones';
-                cameraStatus.textContent = 'Permission denied for cameras';
+                micStatus.textContent = 'Error: ' + error.message;
+                cameraStatus.textContent = 'Error: ' + error.message;
+                
+                // Try to load devices anyway (might have partial permissions or devices might be available)
+                try {
+                    console.log('Attempting to load devices without permissions...');
+                    await loadDevices();
+                } catch (loadError) {
+                    console.error('Error loading devices:', loadError);
+                    micStatus.textContent = 'Failed to load devices: ' + loadError.message;
+                    cameraStatus.textContent = 'Failed to load devices: ' + loadError.message;
+                }
             }
         }
 
@@ -544,8 +600,37 @@
                     audioStream.getAudioTracks().forEach(track => combinedStream.addTrack(track));
 
                     recordedChunks = [];
+                    
+                    // Try to use MP4-compatible codecs (H.264 for video, AAC/Opus for audio)
+                    // Note: MediaRecorder API may still output WebM container even with H.264 codec
+                    // For true MP4 format, post-processing conversion would be needed
+                    let mimeType = 'video/webm;codecs=vp9,opus'; // Default fallback
+                    const mp4Options = [
+                        'video/mp4;codecs=h264,aac',
+                        'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
+                        'video/webm;codecs=h264,opus', // H.264 in WebM container (MP4-compatible codec)
+                        'video/webm;codecs=avc1,opus',  // Alternative H.264 codec
+                        'video/webm;codecs=vp9,opus'    // Fallback
+                    ];
+                    
+                    console.log('Checking for MP4-compatible codecs...');
+                    for (const option of mp4Options) {
+                        if (MediaRecorder.isTypeSupported(option)) {
+                            mimeType = option;
+                            console.log('✓ Using mimeType:', mimeType);
+                            if (mimeType.includes('mp4')) {
+                                console.log('✓ True MP4 format supported!');
+                            } else if (mimeType.includes('h264') || mimeType.includes('avc1')) {
+                                console.log('✓ Using H.264 codec (MP4-compatible, may be in WebM container)');
+                            }
+                            break;
+                        } else {
+                            console.log('✗ Not supported:', option);
+                        }
+                    }
+                    
                     mediaRecorder = new MediaRecorder(combinedStream, {
-                        mimeType: 'video/webm;codecs=vp9,opus'
+                        mimeType: mimeType
                     });
 
                     mediaRecorder.ondataavailable = (event) => {
@@ -555,9 +640,15 @@
                     };
 
                     mediaRecorder.onstop = async () => {
-                        const blob = new Blob(recordedChunks, { type: 'video/webm' });
+                        // Determine blob type based on mimeType used
+                        let blobType = 'video/mp4';
+                        if (mediaRecorder.mimeType && mediaRecorder.mimeType.includes('webm')) {
+                            blobType = 'video/webm';
+                        }
+                        
+                        const blob = new Blob(recordedChunks, { type: blobType });
                         const arrayBuffer = await blob.arrayBuffer();
-                        const fileName = `recording-${Date.now()}.webm`;
+                        const fileName = `recording-${Date.now()}.mp4`;
                         
                         // Convert ArrayBuffer to Uint8Array for IPC
                         const uint8Array = new Uint8Array(arrayBuffer);
@@ -659,8 +750,16 @@
             }
         });
 
-        // Initialize on load
-        initDevices();
+        // Initialize on load - wait for DOM to be ready
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', () => {
+                console.log('DOM loaded, initializing devices...');
+                initDevices();
+            });
+        } else {
+            console.log('DOM already ready, initializing devices...');
+            initDevices();
+        }
         playPauseBtn.disabled = true;
     </script>
 </body>
